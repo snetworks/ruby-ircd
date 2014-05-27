@@ -1,0 +1,4 @@
+<server>
+  <name>Localhost</name>
+  <motd>motd.txt</motd>
+</server>
