@@ -16,22 +16,22 @@ class SICServer
   def initialize host, port
     @srv_host = host
     @s = TCPServer.open host, port
-    @clients = Hash.new # {conn => {cfg_vars => ...}
-    @channels = Hash.new # {channel => {cfg_vars => ..., clients => [c, ...] ...}
-    @nicks = Array.new # Used to check nick collisions
-    @pongs = Hash.new # {c => last_pong_timestamp ...}
-    
     # Set default USER & NICK values for server (this server)
     # This is used to send messages to clients (ie: for numeric replies)
-    server_info = {@s => {:nick => CFG_SERVER_FULLNAME,
+    @clients = {@s => {:nick => CFG_SERVER_FULLNAME,
                                 :username => CFG_SERVER_NAME,
                                 :hostname => CFG_SERVER_NAME,
                                 :servername => CFG_SERVER_FULLNAME,
                                 :realname => 'Your host',
-                                :user => 1
+                                :user => 1,
+				:init => 1,
+				:channels => []
                                }
                   }
-    @clients.merge! server_info
+    @channels = {'d' => {:topic => '', :clients => []}} # {channel => {cfg_vars => ..., clients => [c, ...] ...}
+    @nicks = Array.new # Used to check nick collisions
+    @pongs = Hash.new # {c => last_pong_timestamp ...}
+    
     
     listen
   end
@@ -39,9 +39,20 @@ class SICServer
   def listen
     loop do
       Thread.start(@s.accept) do |c|
-	verbose 'new client'
+	verbose 'New client'
 	
-	new_client = {c => {}}
+	# Fill default values, to escape NoMethod * for NilClass
+	# Ie: to send RPL_NICKNAMEINUSE
+	new_client = {c => {:nick => '',
+			     :username => '',
+			     :hostname => '',
+			     :servername => '',
+			     :realname => '',
+			     :user => 0,
+	                     :init => 0,
+	                     :channels => []
+			    }
+	      }
 	new_ping = {c => Time.now.to_i}
 	@clients.merge! new_client
 	@pongs.merge! new_ping
@@ -69,10 +80,12 @@ class SICServer
   
   def listen_clients c
     loop do
-      msg =  c.gets.chomp
-      
-      verbose msg
-      evaluate c, msg
+      unless c.closed? then
+	msg =  c.gets.chomp
+	
+	verbose msg
+	evaluate c, msg
+      end
     end
   end
   
@@ -113,10 +126,20 @@ class SICServer
     
     # Check if nickname is already in use
     unless @nicks.include? args[1] then
-      @clients[c][:nick] = args[1]
+      # If it is first NICK use
+      if @clients[c][:nick].empty? then
+	@clients[c][:nick] = args[1]
+      else # If request a second NICK: change :nick value & delete previous nick from nicklist
+	verbose 'Switching nick'
+	
+	@nicks.delete @clients[c][:nick]
+	@clients[c][:nick] = args[1]
+      end
+      
       @nicks.push args[1]
     else
-      send_errnr_to_client c, c, NR::ERR_NICKNAMEINUSE, args[1]
+      verbose 'Nick collision'
+      send_errnr_to_client c, NR::ERR_NICKNAMEINUSE, args[1]
     end
     
     # If USER is already set, send RPL_WELCOME, RPL_YOURHOST, RPL_CREATED, and RPL_MYINFO
@@ -155,7 +178,7 @@ class SICServer
     end
     
     # If NICK is already set, send RPL_WELCOME, RPL_YOURHOST, RPL_CREATED, and RPL_MYINFO
-    if @clients[c][:nick] != nil then
+    unless @clients[c][:nick].empty? then
       send_init_connection c
     end
   end
@@ -195,9 +218,9 @@ class SICServer
       else
 	# Put c in channel user list
 	@channels[args[1]][:clients].push c
-	send_raw_all_clients c, raw
       end
       
+      send_raw_all_clients c, raw
       send_rpl_topic c, args[1]
       send_rpl_namreply c, args[1]
     end
@@ -218,6 +241,7 @@ class SICServer
     send_raw_all_clients c, raw
     @clients.delete c
     c.close
+    Thread.exit
   end
   
 end
