@@ -24,9 +24,9 @@ class SICServer
     # Set default USER & NICK values for server (this server)
     # This is used to send messages to clients (ie: for numeric replies)
     server_info = {@s => {:nick => CFG_SERVER_FULLNAME,
-                                :username => '',
-                                :hostname => '',
-                                :servername => '',
+                                :username => CFG_SERVER_NAME,
+                                :hostname => CFG_SERVER_NAME,
+                                :servername => CFG_SERVER_FULLNAME,
                                 :realname => 'Your host',
                                 :user => 1
                                }

@@ -2,7 +2,7 @@ class SICServer
   def check_pong c
     puts Time.now.to_i.to_s + ' - ' + @pongs[c].to_s
     if (Time.now.to_i - @pongs[c]) >= CFG_PING_TIMEOUT
-      puts 'timeouuuut'
+      verbose 'Ping timeout'
       @clients.delete c
       c.close
     end

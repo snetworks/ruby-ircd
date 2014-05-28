@@ -8,7 +8,7 @@ class SICServer
   end
   
   def send_init_connection c
-    send_raw_to_client @s, c, NR::RPL_WELCOME + ' ' + @clients[c][:nick] + ' :Welcome to the Internet Chat Network ' + @clients[c][:nick] + '!' + @clients[c][:username] + '@' + @clients[c][:hostname]
+    send_raw_to_client @s, c, NR::RPL_WELCOME + ' ' + @clients[c][:nick] + ' :Welcome to the Rizon Internet Relay Chat Network ' + @clients[c][:nick]
     send_raw_to_client @s, c, NR::RPL_YOURHOST + ' ' + @clients[c][:nick] + ' :Your host is ' + CFG_SERVER_NAME + ', running version ' + GLOBAL_VERSION
     send_raw_to_client @s, c, NR::RPL_CREATED + ' ' + @clients[c][:nick] + ' :This server was created ' + GLOBAL_DATE
     send_raw_to_client @s, c, NR::RPL_MYINFO + ' ' + @clients[c][:nick] + ' :' + CFG_SERVER_NAME + ' ' + GLOBAL_VERSION + '   ' # TODO: <umodes> <cmodes>
