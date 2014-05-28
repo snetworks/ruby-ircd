@@ -8,7 +8,9 @@ require 'socket'
 require './argv_handling.rb' # handle argv and assign constants
 require './cfg_file_parsing.rb' # parse config file (default is cfg.xml) & define CFG_MOTD
 require './numeric_replies.rb' # define NR::name => numeric replies
+require './checkers.rb' # checking methods to validates nicks, channels ... also include ping timeout checker
 require './output_methods.rb' # define output methods to send to clients
+
 
 class SICServer
   def initialize host, port
@@ -17,15 +19,17 @@ class SICServer
     @clients = Hash.new # {conn => {cfg_vars => ...}
     @channels = Hash.new # {channel => {cfg_vars => ..., clients => [c, ...] ...}
     @nicks = Array.new # Used to check nick collisions
+    @pongs = Hash.new # {c => last_pong_timestamp ...}
     
-    # Set default USER & NICK values for the host (this server)
+    # Set default USER & NICK values for server (this server)
     # This is used to send messages to clients (ie: for numeric replies)
-    server_info = {:server => {:nick => CFG_SERVER_NAME,
-                               :username => GLOBAL_VERSION,
-                               :hostname => CFG_SERVER_NAME,
-                               :servername => 'localhost',
-                               :realname => 'Your host'
-                              }
+    server_info = {@s => {:nick => CFG_SERVER_FULLNAME,
+                                :username => '',
+                                :hostname => '',
+                                :servername => '',
+                                :realname => 'Your host',
+                                :user => 1
+                               }
                   }
     @clients.merge! server_info
     
@@ -36,11 +40,28 @@ class SICServer
     loop do
       Thread.start(@s.accept) do |c|
 	verbose 'new client'
-	puts 'newnwnn'
 	
 	new_client = {c => {}}
+	new_ping = {c => Time.now.to_i}
 	@clients.merge! new_client
+	@pongs.merge! new_ping
+	
 	@clients[c][:channels] = Array.new
+	
+	pong = Thread.new do
+	  loop do
+	    check_pong c
+	    sleep CFG_PING_TIMEOUT
+	  end
+	end
+	
+	ping = Thread.new do
+	  loop do
+	    send_ping c, CFG_SERVER_FULLNAME
+	    sleep CFG_PING_INTERVAL
+	  end
+	end
+	
 	listen_clients c
       end
     end
@@ -48,10 +69,9 @@ class SICServer
   
   def listen_clients c
     loop do
-      msg = c.gets.chomp
+      msg =  c.gets.chomp
       
       verbose msg
-      
       evaluate c, msg
     end
   end
@@ -59,12 +79,17 @@ class SICServer
   # Evaluate SIC commands (REGISTER, NICK, ....)
   def evaluate c, msg
     verbose 'Starting evaluation'
+    verbose_raw msg
     
     case
     when msg =~ /^NICK /
       evaluate_nick c, msg
     when msg =~ /^USER /
       evaluate_user c, msg
+    when msg =~ /^PONG /
+      evaluate_pong c, msg
+    when msg =~ /^PING /
+      evaluate_ping c, msg
     when msg =~ /^PRIVMSG /
       evaluate_privmsg c, msg
     when msg =~ /^JOIN /
@@ -72,9 +97,10 @@ class SICServer
     when msg =~ /^QUIT[[:space:]]?/
       evaluate_quit c, msg
     when msg =~ /^DEBUG/
-      send_raw_to_client c, @clients
-      send_raw_to_client c, @channels
-      send_raw_to_client c, @nicks
+      send_raw_to_client @s, c, @clients.to_s
+      send_raw_to_client @s, c, @channels.to_s
+      send_raw_to_client @s, c, @nicks.to_s
+      send_raw_to_client @s, c, @pongs.to_s
     end
   end
   
@@ -94,7 +120,7 @@ class SICServer
     end
     
     # If USER is already set, send RPL_WELCOME, RPL_YOURHOST, RPL_CREATED, and RPL_MYINFO
-    if @client[c][:user] == 1 then
+    if @clients[c][:user] == 1 then
       send_init_connection c
     end
   end
@@ -125,13 +151,28 @@ class SICServer
 	send_errnr_to_client c, NR::ERR_NEEDMOREPARAMS, 'USER'
       else
 	@clients[c][:user] = 1
-	send_motd
       end
     end
     
     # If NICK is already set, send RPL_WELCOME, RPL_YOURHOST, RPL_CREATED, and RPL_MYINFO
-    if @client[c][:nick] != nil then
+    if @clients[c][:nick] != nil then
       send_init_connection c
+    end
+  end
+  
+  def evaluate_ping c, raw
+    verbose 'Evaluating PING'
+    if matches = raw.match(/^PING :([\w\.]*)$/) then
+      send_pong c, matches[1]
+    end
+  end
+  
+  def evaluate_pong c, raw
+    verbose 'Evaluating PONG'
+    if matches = raw.match(/^PONG :([\w\.]*)$/) then
+      # @pongs is used to check ping timeouts in checkers.rb
+      tmp_pong = {c => Time.now.to_i}
+      @pongs.merge! tmp_pong
     end
   end
   
@@ -146,15 +187,19 @@ class SICServer
       # Push channel name in client's joined chans list
       @clients[c][:channels].push args[1]
 	
-      # If new channel, put it in channels list
+      # If new channel, put c in channels list
       if @channels[args[1]] == nil then
-	new_channel = {args[1] => {:clients => [c]}}
+	new_channel = {args[1] => {:clients => [c], :topic => ''}}
 	@channels.merge! new_channel
+	
       else
 	# Put c in channel user list
 	@channels[args[1]][:clients].push c
 	send_raw_all_clients c, raw
       end
+      
+      send_rpl_topic c, args[1]
+      send_rpl_namreply c, args[1]
     end
   end
   
@@ -173,26 +218,6 @@ class SICServer
     send_raw_all_clients c, raw
     @clients.delete c
     c.close
-  end
-  
-  # Check if c is registered (passed valid NICK and USER commands)
-  # if verbose is set, send a warning to c through the socket
-  def registered? c, verbose = false
-    if @clients[c][:nick] == nil
-      if verbose then
-	c.puts 'NICK is NOT set, you cannot operate'
-      end
-      
-      return false
-    elsif @clients[c][:user] == nil
-      if verbose then
-	c.puts 'You are not registered, please use the USER command, you cannot operate'
-      end
-      
-      return false
-    else
-      return true
-    end
   end
   
 end

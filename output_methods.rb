@@ -1,10 +1,46 @@
 class SICServer
+  def send_ping c, append
+    send_raw_to_client 'void', c, 'PING :' + append
+  end
+  
+  def send_pong c, append
+    send_raw_to_client 'void', c, 'PONG :' + append
+  end
+  
   def send_init_connection c
-    send_raw_to_client :server, c, RPL_WELCOME + ' :Welcome to the Internet Chat Network ' +
-	@clients[c][':nick'] + '!' + @clients[c][':hostname'] + '@' + @clients[c][':hostname']
-    send_raw_to_client :server, c, RPL_YOURHOST + ':Your host is ' + CFG_SERVER_NAME + ', running version ' + GLOBAL_VERSION
-    send_raw_to_client :server, c, RPL_CREATED + ':This server was created ' + GLOBAL_DATE
-    send_raw_to_client :server, c, RPL_MYINFO + ':' + CFG_SERVER_NAME + ' ' + GLOBAL_VERSION + '   ' # TODO: <umodes> <cmodes>
+    send_raw_to_client @s, c, NR::RPL_WELCOME + ' ' + @clients[c][:nick] + ' :Welcome to the Internet Chat Network ' + @clients[c][:nick] + '!' + @clients[c][:username] + '@' + @clients[c][:hostname]
+    send_raw_to_client @s, c, NR::RPL_YOURHOST + ' ' + @clients[c][:nick] + ' :Your host is ' + CFG_SERVER_NAME + ', running version ' + GLOBAL_VERSION
+    send_raw_to_client @s, c, NR::RPL_CREATED + ' ' + @clients[c][:nick] + ' :This server was created ' + GLOBAL_DATE
+    send_raw_to_client @s, c, NR::RPL_MYINFO + ' ' + @clients[c][:nick] + ' :' + CFG_SERVER_NAME + ' ' + GLOBAL_VERSION + '   ' # TODO: <umodes> <cmodes>
+    
+    send_motd c
+  end
+  
+  def send_motd c
+    send_raw_to_client @s, c, NR::RPL_MOTDSTART + ' ' + @clients[c][:nick] + ' :- ' + CFG_SERVER_FULLNAME + ' Message of the day - '
+    
+    File.open CFG_MOTD_PATH, 'r' do |motd|
+      motd.each do |line|
+	send_raw_to_client @s, c, NR::RPL_MOTD + ' ' + @clients[c][:nick] + ' :- ' + line
+      end
+    end
+    
+    
+    send_raw_to_client @s, c, NR::RPL_ENDOFMOTD + ' ' + @clients[c][:nick] + ' :End of /MOTD command '
+  end
+  
+  def send_rpl_topic c, chan
+    send_raw_to_client @s, c, NR::RPL_TOPIC + ' ' + @clients[c][:nick] + ' ' + chan + ':' + @channels[chan][:topic]
+  end
+  
+  # Note the lack of 'e', RFC 1459 & 2812 compliant
+  def send_rpl_namreply c, chan
+    nicklist = ''
+    @channels[chan][:clients].each do |client_c|
+      nicklist += @clients[client_c][:nick] + ' '
+    end
+    
+    send_raw_to_client @s, c, NR::RPL_NAMREPLY + ' ' + @clients[c][:nick] + ' ' + chan + ' :' + nicklist
   end
   
   def send_raw_all_clients c, raw
@@ -29,40 +65,35 @@ class SICServer
     unless between.empty?
       between += ' '
     end
-    send_raw_to_client c, c, err[:errno].to_s + ' ' + between + ':' + err[:errmsg]
+    send_raw_to_client @s, c, err[:errno] + ' ' + @clients[c][:nick] + ' ' + between + ':' + err[:errmsg]
   end
 
-  # Send to a specific client (useful for debugging with --verbose)
+  # Send to a specific client
   def send_raw_to_client sender, to, append
-    begin
-      verbose_raw ':' + @clients[sender][:nick] + '!' + @clients[sender][:username] + '@' + @clients[sender][:hostname] + ' :' + append
-      to.puts ':' + @clients[sender][:nick] + '!' + @clients[sender][:username] + '@' + @clients[sender][:hostname] + ' :' + append
-    rescue TypeError
-      # If @clients[sender][:] are equal nil, send directly the message
-      verbose 'Type error in send_raw_to_client :handled'
-      verbose_raw ':' + @srv_host + '@' + @srv_host + ' ' + append
-      to.puts ':' + @srv_host + '@' + @srv_host + ' ' + append
-    rescue => e
-      verbose e.class.to_s + ' in send_raw_to_client :NOT HANDLED'
+    unless sender == 'void'
+      verbose_raw ':' + @clients[sender][:nick] + '!' + @clients[sender][:username] + '@' + @clients[sender][:hostname] + ' ' + append
+      to.puts ':' + @clients[sender][:nick] + '!' + @clients[sender][:username] + '@' + @clients[sender][:hostname] + ' ' + append
+    else
+      # Used for PING messages
+      verbose_raw append.to_s
+      to.puts append.to_s
     end
   end
   
   def verbose msg
-    if ARG_VERBOSE == true then
+    if defined? ARG_VERBOSE then
       output_colorize msg
-      puts 'bebebeb'
     end
-    puts 'oh shit dude'
   end
   
   def verbose_raw msg
-    if ARG_RAW == true then
+    if defined? ARG_RAW then
       puts output_colorize msg
     end
   end
   
   def output_colorize msg
-    if ARG_COLOR == true then
+    if defined? ARG_COLOR then
       return msg
     else
       # TODO

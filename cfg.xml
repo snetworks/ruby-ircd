@@ -1,4 +1,8 @@
 <server>
+  <fullname>irc.example.net</fullname>
   <name>Localhost</name>
   <motd>motd.txt</motd>
+  
+  <ping_interval>30</ping_interval>
+  <ping_timeout>360</ping_timeout>
 </server>
