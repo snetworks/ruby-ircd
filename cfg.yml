@@ -1,0 +1,6 @@
+fullname: irc.example.net
+name: Localhost
+motd: motd.txt
+  
+ping_interval: 5
+ping_timeout: 15

@@ -48,16 +48,19 @@ class SICServer
     send_raw_to_client @s, c, NR::RPL_ENDOFNAMES + ' ' + @clients[c][:nick] + ' ' + chan + ' :End of NAMES list'
   end
   
+  def send_join c, raw
+    channel = raw.split(' ')[1]
+    send_raw_to_channel c, channel, raw
+  end
+  
   def send_raw_all_clients c, raw
     args = raw.split ' '
     
     case
-    when channel?(args[1])# Used for commands which specify a channel (ie: PRIVMSG, PART ...)
-      channel = args[1]
-    
-      send_raw_to_channel c, channel, raw
-    when nick?(args[1]) # Used to send PRIVMSG to nicks
-      send_raw_to_client c, send_to, raw
+    when channel_format?(args[1])# Used for commands which specify a channel (ie: PRIVMSG, PART ...)
+      send_raw_to_channel c, args[1], raw, false
+    when nick_format?(args[1]) # Used to send PRIVMSG to nicks
+      send_raw_to_client c, @nicks[args[1]], raw, false
     else # Used for commands which does not specify a channel (ie: QUIT)
       @clients[c][:channels].each do |c_channels|
 	send_raw_to_channel c, c_channels, raw
@@ -66,23 +69,27 @@ class SICServer
   end
   
   # Send to all clients on a specific channel
-  def send_raw_to_channel c, channel, raw
-    if registered?(c,true) && channel?(channel) then
+  def send_raw_to_channel c, channel, raw, double = true
+    if channel_format?(channel) then
       if @channels.include? channel then
 	if @clients[c][:channels].include? channel then
 	  @channels[channel][:clients].each do |channel_clients|
-	    unless channel_clients == c then # No double
+	    if double then # If double = true, send the raw to the sender (c)
 	      send_raw_to_client c, channel_clients, raw
+	    else
+	      unless channel_clients == c then
+		send_raw_to_client c, channel_clients, raw
+	      end
 	    end
 	  end
 	else
-	  # TODO ERR_NOTONCHANNEL
+	  send_errnr_to_client c, NR::ERR_CANNOTSENDTOCHAN, channel
 	end
       else
-	# TODO ERR_NOSUCHCHANNEL
+	send_errnr_to_client c, NR::ERR_NOSUCHCHANNEL, channel
       end
     else
-      # TODO ERR_BADCHANMASK
+      send_errnr_to_client c, NR::ERR_BADCHANMASK, channel
     end
   end
   

@@ -8,7 +8,7 @@ class SICServer
     end
   end
   
-  def channel? chan
+  def channel_format? chan
     if chan =~ /^#(\w*)$/ then
       return true
     else
@@ -16,7 +16,7 @@ class SICServer
     end
   end
   
-  def nick? nick
+  def nick_format? nick
     if nick =~ /^([\w`\"\'\^]*)$/ then
       return true
     else
@@ -26,9 +26,9 @@ class SICServer
   
   # Return either 'nick' or 'channel'
   def check_type var
-    if channel? var then
+    if channel_format? var then
       return 'channel'
-    elsif nick? var then
+    elsif nick_format? var then
       return 'nick'
     else
       return 'nil'
@@ -38,17 +38,15 @@ class SICServer
   # Check if c is registered (passed valid NICK and USER commands)
   # if verbose is set, send a warning to c through the socket
   def registered? c, verbose = false
-    if @clients[c][:nick] == nil
+    if @clients[c][:nick].empty?
       if verbose then
-	# TODO: ERR_NOTREGISTERED
-	c.puts 'NICK is NOT set, you cannot operate'
+	send_errnr_to_client c, NR::ERR_NOTREGISTERED
       end
       
       return false
-    elsif @clients[c][:user] == nil
+    elsif @clients[c][:user] != 1
       if verbose then
-	# TODO: ERR_NOTREGISTERED
-	c.puts 'You are not registered, please use the USER command, you cannot operate'
+	send_errnr_to_client c, NR::ERR_NOTREGISTERED
       end
       
       return false

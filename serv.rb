@@ -6,7 +6,7 @@ GLOBAL_DATE = t.day.to_s + '/' + t.month.to_s + '/' + t.year.to_s + ' ' + t.hour
 
 require 'socket'
 require './argv_handling.rb' # handle argv and assign constants
-require './cfg_file_parsing.rb' # parse config file (default is cfg.xml) & define CFG_MOTD
+require './ymlcfg_file_parsing.rb' # parse config file (default is cfg.xml) & define CFG_MOTD
 require './numeric_replies.rb' # define NR::name => numeric replies
 require './checkers.rb' # checking methods to validates nicks, channels ... also include ping timeout checker
 require './output_methods.rb' # define output methods to send to clients
@@ -28,8 +28,8 @@ class SICServer
 				:channels => []
                                }
                   }
-    @channels = {'d' => {:topic => '', :clients => []}} # {channel => {cfg_vars => ..., clients => [c, ...] ...}
-    @nicks = Array.new # Used to check nick collisions
+    @channels = {'' => {:topic => '', :clients => []}} # {channel => {cfg_vars => ..., clients => [c, ...] ...}
+    @nicks = Hash.new # {nick => c ...} Used to check nick collisions, & get c from nick
     @pongs = Hash.new # {c => last_pong_timestamp ...}
     
     
@@ -83,7 +83,7 @@ class SICServer
       unless c.closed? then
 	msg =  c.gets.chomp
 	
-	verbose msg
+	verbose '<<' + msg
 	evaluate c, msg
       end
     end
@@ -104,9 +104,17 @@ class SICServer
     when msg =~ /^PING /
       evaluate_ping c, msg
     when msg =~ /^PRIVMSG /
-      evaluate_privmsg c, msg
+      if registered? c, 1 then
+	evaluate_privmsg c, msg
+      end
     when msg =~ /^JOIN /
-      evaluate_join c, msg
+      if registered? c, 1 then
+	evaluate_join c, msg
+      end
+    when msg =~ /^NOTICE /
+      if registered? c, 1 then
+	evaluate_notice c, msg
+      end
     when msg =~ /^QUIT[[:space:]]?/
       evaluate_quit c, msg
     when msg =~ /^DEBUG/
@@ -136,7 +144,8 @@ class SICServer
 	@clients[c][:nick] = args[1]
       end
       
-      @nicks.push args[1]
+      new_nick = {args[1] => c}
+      @nicks.merge! new_nick
     else
       verbose 'Nick collision'
       send_errnr_to_client c, NR::ERR_NICKNAMEINUSE, args[1]
@@ -220,7 +229,7 @@ class SICServer
 	@channels[args[1]][:clients].push c
       end
       
-      send_raw_all_clients c, raw
+      send_join c, raw
       send_rpl_topic c, args[1]
       send_rpl_namreply c, args[1]
     end
@@ -231,6 +240,19 @@ class SICServer
   def evaluate_privmsg c, raw
     verbose 'Evaluating PRIVMSG'
     send_raw_all_clients c, raw
+  end
+  
+  # Command: NOTICE
+  # Parameters: <nick> <message>
+  def evaluate_notice c, raw
+    verbose 'Evaluating NOTICE'
+    
+    args = raw.split ' '
+    unless @nicks[args[1]].nil? then
+      send_raw_to_client c, @nicks[args[1]], raw
+    else
+      send_errnr_to_client c, NR::ERR_NOSUCHNICK, args[1]
+    end
   end
   
   # Command: QUIT
