@@ -12,3 +12,6 @@ Nowaday it support following commands:
 * PRIVMSG
 * NOTICE
 * QUIT
+
+It does support SSL (experimental)
+It does not support plain text (what's the need to support it ?)

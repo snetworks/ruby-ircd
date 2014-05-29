@@ -128,8 +128,8 @@ class SICServer
   end
   
   def output_colorize msg
-    if defined? ARG_COLOR then
-      return msg
+    if ARG_COLOR then
+      return msg.blue
     else
       # TODO
       return msg

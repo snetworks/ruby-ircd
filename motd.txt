@@ -1,5 +1,5 @@
 RUBY-IRCD
-SIC - Secure Internet Chat Server - IRCP supplicant
+SIC - Secure Internet Chat Server - IRCP compliant 
 Hi everybody and welcome on my fresh new server
 For the moment the daemon is actually at the beta state
       __________________________

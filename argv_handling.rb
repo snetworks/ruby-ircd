@@ -19,3 +19,20 @@ OptionParser.new do |opts|
     ARG_CFG_FILE = f
   end
 end.parse!
+
+# TODO: something less uggly to set defaults
+unless defined? ARG_VERBOSE then
+  ARG_VERBOSE = false
+end
+
+unless defined? ARG_RAW then
+  ARG_RAW = false
+end
+
+unless defined? ARG_COLOR then
+  ARG_COLOR = false
+end
+
+unless defined? ARG_CFG_FILE then
+  ARG_CFG_FILE = 'cfg.yml'
+end

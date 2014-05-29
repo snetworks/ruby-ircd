@@ -5,87 +5,106 @@ t = Time.new
 GLOBAL_DATE = t.day.to_s + '/' + t.month.to_s + '/' + t.year.to_s + ' ' + t.hour.to_s + ':' + t.min.to_s + ':' + t.sec.to_s
 
 require 'socket'
+require 'openssl'
 require './argv_handling.rb' # handle argv and assign constants
 require './ymlcfg_file_parsing.rb' # parse config file (default is cfg.xml) & define CFG_MOTD
 require './numeric_replies.rb' # define NR::name => numeric replies
 require './checkers.rb' # checking methods to validates nicks, channels ... also include ping timeout checker
 require './output_methods.rb' # define output methods to send to clients
-
+require 'colorize' if ARG_COLOR
 
 class SICServer
   def initialize host, port
     @srv_host = host
-    @s = TCPServer.open host, port
+    @plainttext_socket = TCPServer.open host, port
+    
+    ssl_context = OpenSSL::SSL::SSLContext.new()
+    ssl_context.cert = OpenSSL::X509::Certificate.new(File.open(CFG_SSL_CERT_PATH))
+    ssl_context.key = OpenSSL::PKey::RSA.new(File.open(CFG_SSL_KEY_PATH))
+
+    flags = OpenSSL::SSL::VERIFY_PEER
+    ssl_context.verify_mode = flags
+    @s = OpenSSL::SSL::SSLServer.new(@plainttext_socket, ssl_context)
+    
     # Set default USER & NICK values for server (this server)
     # This is used to send messages to clients (ie: for numeric replies)
     @clients = {@s => {:nick => CFG_SERVER_FULLNAME,
-                                :username => CFG_SERVER_NAME,
-                                :hostname => CFG_SERVER_NAME,
-                                :servername => CFG_SERVER_FULLNAME,
-                                :realname => 'Your host',
-                                :user => 1,
-				:init => 1,
-				:channels => []
-                               }
+                       :username => CFG_SERVER_NAME,
+                       :hostname => CFG_SERVER_NAME,
+                       :servername => CFG_SERVER_FULLNAME,
+                       :realname => 'Your host',
+                       :user => 1,
+                       :init => 1,
+                       :channels => []
+                      }
                   }
+    @threads = Array.new # List of threads (not used for the moment)
     @channels = {'' => {:topic => '', :clients => []}} # {channel => {cfg_vars => ..., clients => [c, ...] ...}
     @nicks = Hash.new # {nick => c ...} Used to check nick collisions, & get c from nick
     @pongs = Hash.new # {c => last_pong_timestamp ...}
-    
-    
-    listen
+    create_client
   end
 
-  def listen
+  # We separate @s.accept to be able to handle exceptions
+  def create_client
     loop do
-      Thread.start(@s.accept) do |c|
-	verbose 'New client'
-	
-	# Fill default values, to escape NoMethod * for NilClass
-	# Ie: to send RPL_NICKNAMEINUSE
-	new_client = {c => {:nick => '',
-			     :username => '',
-			     :hostname => '',
-			     :servername => '',
-			     :realname => '',
-			     :user => 0,
-	                     :init => 0,
-	                     :channels => []
-			    }
-	      }
-	new_ping = {c => Time.now.to_i}
-	@clients.merge! new_client
-	@pongs.merge! new_ping
-	
-	@clients[c][:channels] = Array.new
-	
-	pong = Thread.new do
-	  loop do
-	    check_pong c
-	    sleep CFG_PING_TIMEOUT
-	  end
+      begin
+	while c =  @s.accept
+	  verbose 'New client'
+	  Thread.new{listen c}
 	end
-	
-	ping = Thread.new do
-	  loop do
-	    send_ping c, CFG_SERVER_FULLNAME
-	    sleep CFG_PING_INTERVAL
-	  end
-	end
-	
-	listen_clients c
+      rescue => e
+	verbose 'Error: ' + e.class.to_s + ' ' + e.message
+	verbose e.backtrace.join "\n"
       end
     end
   end
   
-  def listen_clients c
+  def listen c
     loop do
-      unless c.closed? then
-	msg =  c.gets.chomp
-	
-	verbose '<<' + msg
-	evaluate c, msg
+      # Fill default values, to escape NoMethod * for NilClass
+      # Ie: to send RPL_NICKNAMEINUSE
+      new_client = {c => {:nick => '',
+			  :username => '',
+			  :hostname => '',
+			  :servername => '',
+			  :realname => '',
+			  :user => 0,
+			  :init => 0,
+			  :channels => []
+			  }
+	    }
+      new_ping = {c => Time.now.to_i}
+      @clients.merge! new_client
+      @pongs.merge! new_ping
+      
+      @clients[c][:channels] = Array.new
+      
+      pong = Thread.new do
+	loop do
+	  check_pong c
+	  sleep CFG_PING_TIMEOUT
+	end
       end
+      
+      ping = Thread.new do
+	loop do
+	  send_ping c, CFG_SERVER_FULLNAME
+	  sleep CFG_PING_INTERVAL
+	end
+      end
+      
+      listen_clients c
+    end
+  end
+  
+  def listen_clients c
+    puts 'inlistenclient'
+    loop do
+      msg =  c.gets.chomp
+      
+      verbose '<<' + msg
+      evaluate c, msg
     end
   end
   
@@ -122,6 +141,7 @@ class SICServer
       send_raw_to_client @s, c, @channels.to_s
       send_raw_to_client @s, c, @nicks.to_s
       send_raw_to_client @s, c, @pongs.to_s
+      Thread.list.each {|t| p t}
     end
   end
   

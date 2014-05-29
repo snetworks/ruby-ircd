@@ -1,6 +1,9 @@
 fullname: irc.example.net
 name: Localhost
 motd: motd.txt
+
+ssl_cert_path: ./cert.pem
+ssl_key_path: ./server.key
   
 ping_interval: 5
 ping_timeout: 15
