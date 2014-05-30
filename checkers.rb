@@ -1,4 +1,4 @@
-class SICServer
+class IRCServer
   def check_pong c
     if (Time.now.to_i - @pongs[c]) >= CFG_PING_TIMEOUT
       verbose 'Ping timeout'

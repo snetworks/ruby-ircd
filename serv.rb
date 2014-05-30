@@ -13,7 +13,7 @@ require './checkers.rb' # checking methods to validates nicks, channels ... also
 require './output_methods.rb' # define output methods to send to clients
 require 'colorize' if ARG_COLOR
 
-class SICServer
+class IRCServer
   def initialize host, port
     @srv_host = host
     @plainttext_socket = TCPServer.open host, port
@@ -25,6 +25,7 @@ class SICServer
     flags = OpenSSL::SSL::VERIFY_PEER
     ssl_context.verify_mode = flags
     @s = OpenSSL::SSL::SSLServer.new(@plainttext_socket, ssl_context)
+    @mutex = Mutex.new
     
     # Set default USER & NICK values for server (this server)
     # This is used to send messages to clients (ie: for numeric replies)
@@ -35,13 +36,16 @@ class SICServer
                        :realname => 'Your host',
                        :user => 1,
                        :init => 1,
-                       :channels => []
+                       :channels => [],
+                       :itrust => [] # :itrust is used to list c's trusted clients
                       }
                   }
+    @nicks = Hash.new # Used for nick collisions
     @threads = Array.new # List of threads (not used for the moment)
     @channels = {'' => {:topic => '', :clients => []}} # {channel => {cfg_vars => ..., clients => [c, ...] ...}
-    @nicks = Hash.new # {nick => c ...} Used to check nick collisions, & get c from nick
     @pongs = Hash.new # {c => last_pong_timestamp ...}
+    
+    @tests = Hash.new
     create_client
   end
 
@@ -99,7 +103,6 @@ class SICServer
   end
   
   def listen_clients c
-    puts 'inlistenclient'
     loop do
       msg =  c.gets.chomp
       
@@ -134,6 +137,10 @@ class SICServer
       if registered? c, 1 then
 	evaluate_notice c, msg
       end
+    when msg =~ /^PART /
+      if registered? c, 1 then
+	evaluate_part c, msg
+      end
     when msg =~ /^QUIT[[:space:]]?/
       evaluate_quit c, msg
     when msg =~ /^DEBUG/
@@ -141,7 +148,6 @@ class SICServer
       send_raw_to_client @s, c, @channels.to_s
       send_raw_to_client @s, c, @nicks.to_s
       send_raw_to_client @s, c, @pongs.to_s
-      Thread.list.each {|t| p t}
     end
   end
   
@@ -154,27 +160,33 @@ class SICServer
     
     # Check if nickname is already in use
     unless @nicks.include? args[1] then
-      # If it is first NICK use
-      if @clients[c][:nick].empty? then
-	@clients[c][:nick] = args[1]
-      else # If request a second NICK: change :nick value & delete previous nick from nicklist
-	verbose 'Switching nick'
+      if nick_format? args[1] then
+	# If it is first NICK use
+	if @clients[c][:nick].empty? then
+	  @mutex.synchronize{@clients[c][:nick] = args[1]}
+	  # If USER is already set, send RPL_WELCOME, RPL_YOURHOST, RPL_CREATED, and RPL_MYINFO
+	  if @clients[c][:user] == 1 then
+	    send_init_connection c
+	  end
+	else # If request a second NICK: change :nick value & delete previous nick from nicklist
+	  verbose 'Switching nick'
+	  @mutex.synchronize{
+	    @nicks.delete @clients[c][:nick]
+	    @clients[c][:nick] = args[1]
+	  }
+	end
 	
-	@nicks.delete @clients[c][:nick]
-	@clients[c][:nick] = args[1]
+	new_nick = {args[1] => c}
+	@mutex.synchronize{@nicks.merge! new_nick}
+      else
+      send_errnr_to_client c, NR::ERR_ERRONEUSNICKNAME, args[1]
       end
-      
-      new_nick = {args[1] => c}
-      @nicks.merge! new_nick
     else
       verbose 'Nick collision'
       send_errnr_to_client c, NR::ERR_NICKNAMEINUSE, args[1]
     end
     
-    # If USER is already set, send RPL_WELCOME, RPL_YOURHOST, RPL_CREATED, and RPL_MYINFO
-    if @clients[c][:user] == 1 then
-      send_init_connection c
-    end
+
   end
   
   # Command: USER
@@ -188,10 +200,12 @@ class SICServer
     else
       args = raw.split ' '
       
-      @clients[c][:username] = args[1]
-      @clients[c][:hostname] = args[2]
-      @clients[c][:servername] = args[3]
-      @clients[c][:realname] = args[4]
+      @mutex.synchronize{
+	@clients[c][:username] = args[1]
+	@clients[c][:hostname] = args[2]
+	@clients[c][:servername] = args[3]
+	@clients[c][:realname] = args[4]
+      }
       
       if @clients[c][:username] == nil ||
 	  @clients[c][:hostname] == nil ||
@@ -199,10 +213,10 @@ class SICServer
 	  @clients[c][:realname] == nil
 	then
 	  
-	@clients[c][:user] = nil
+	@mutex.synchronize{@clients[c][:user] = nil}
 	send_errnr_to_client c, NR::ERR_NEEDMOREPARAMS, 'USER'
       else
-	@clients[c][:user] = 1
+	@mutex.synchronize{@clients[c][:user] = 1}
       end
     end
     
@@ -232,27 +246,24 @@ class SICServer
   # Parameters: <channel>
   def evaluate_join c, raw
     verbose 'Evaluating JOIN'
+  
+    args = raw.split ' '
     
-    if registered? c, 1 then
-      args = raw.split ' '
+    # Push channel name in client's joined chans list
+    @mutex.synchronize{@clients[c][:channels].push args[1]}
       
-      # Push channel name in client's joined chans list
-      @clients[c][:channels].push args[1]
-	
-      # If new channel, put c in channels list
-      if @channels[args[1]] == nil then
-	new_channel = {args[1] => {:clients => [c], :topic => ''}}
-	@channels.merge! new_channel
-	
-      else
-	# Put c in channel user list
-	@channels[args[1]][:clients].push c
-      end
-      
-      send_join c, raw
-      send_rpl_topic c, args[1]
-      send_rpl_namreply c, args[1]
+    # If new channel, put c in channels list
+    if @channels[args[1]] == nil then
+      new_channel = {args[1] => {:clients => [c], :topic => ''}}
+      @mutex.synchronize{@channels.merge! new_channel}
+    else
+      # Put c in channel user list
+      @mutex.synchronize{@channels[args[1]][:clients].push c}
     end
+    
+    send_join c, raw
+    send_rpl_topic c, args[1]
+    send_rpl_namreply c, args[1]
   end
   
   # Command: PRIVMSG
@@ -274,7 +285,19 @@ class SICServer
       send_errnr_to_client c, NR::ERR_NOSUCHNICK, args[1]
     end
   end
-  
+
+  # Command: PART
+  # Parameters: <channel>
+  def evaluate_part c, raw
+    verbose 'Evaluating PART'
+    
+    args = raw.split ' '
+    # if client on channel
+    if @clients[c][:channels].include? args[1] then
+      @mutex.synchronize{@channels[args[1]][:clients].delete c}
+      send_part c, raw
+    end
+  end
   # Command: QUIT
   # Parameters: <message>
   def evaluate_quit c, raw
@@ -288,4 +311,4 @@ class SICServer
   
 end
 
-s = SICServer.new 'localhost', 6666
+s = IRCServer.new 'localhost', 6666

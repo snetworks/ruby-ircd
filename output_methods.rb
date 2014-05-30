@@ -1,4 +1,4 @@
-class SICServer
+class IRCServer
   def send_ping c, append
     send_raw_to_client 'void', c, 'PING :' + append
   end
@@ -49,6 +49,11 @@ class SICServer
   end
   
   def send_join c, raw
+    channel = raw.split(' ')[1]
+    send_raw_to_channel c, channel, raw
+  end
+  
+  def send_part c, raw
     channel = raw.split(' ')[1]
     send_raw_to_channel c, channel, raw
   end
@@ -116,13 +121,13 @@ class SICServer
   end
   
   def verbose msg
-    if defined? ARG_VERBOSE then
+    if ARG_VERBOSE then
       puts output_colorize msg
     end
   end
   
   def verbose_raw msg
-    if defined? ARG_RAW then
+    if ARG_RAW then
       puts output_colorize msg
     end
   end

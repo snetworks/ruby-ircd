@@ -17,6 +17,8 @@ module NR
   RPL_ENDOFMOTD = '376'
   
   ERR_NOSUCHNICK = {:errno => '401', :errmsg => 'No such nick/channel'}
+  ERR_ERRONEUSNICKNAME = {:errno => '432', :errmsg => 'Erroneus nickname'}
+  
   ERR_NOSUCHCHANNEL = {:errno => '403', :errmsg => 'No such channel'}
   ERR_CANNOTSENDTOCHAN = {:errono => '404', :errmsg => 'Cannot send to channel'}
   ERR_BADCHANMASK = {:errno => '476', :errmsg => 'Bad Channel Mask'}
